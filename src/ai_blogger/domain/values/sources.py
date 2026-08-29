@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Self
 from urllib.parse import urlsplit, urlunsplit
 
@@ -24,12 +25,7 @@ DAYS_IN_BILLING_MONTH = 30
 
 @dataclass(frozen=True, slots=True)
 class SourceUrl:
-    """Адрес, по которому сервер пойдёт сам: лента или статья
-
-    Проверки здесь дешёвые и не окончательные: имя может разрешиться в
-    петлевой адрес, а ответ DNS — поменяться между проверкой и запросом.
-    При загрузке адрес нужно проверить ещё раз, уже разрешённым.
-    """
+    """Адрес, по которому сервер пойдёт сам: лента или статья"""
 
     value: str
 
@@ -177,3 +173,11 @@ class TopicSources:
 
     def fits_free_search_budget(self, cycles_per_day: int) -> bool:
         return self.monthly_search_requests(cycles_per_day) <= BRAVE_FREE_MONTHLY_QUERIES
+
+
+class TopicOrigin(StrEnum):
+    """Откуда тема попала в очередь"""
+
+    FEED = "feed"
+    SEARCH = "search"
+    MANUAL = "manual"
