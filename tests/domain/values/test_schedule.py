@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from ai_blogger.domain.errors import InvalidValueError
-from ai_blogger.domain.values.schedule import PublicationSchedule
+from ai_blogger.domain.values.schedule import PublicationSchedule, Weekday
 
 BERLIN = ZoneInfo("Europe/Berlin")
 
@@ -29,24 +29,34 @@ TRANSITIONS = [
 def test_of_sorts_slots_and_drops_duplicates() -> None:
     schedule = PublicationSchedule.of("Europe/Berlin", [time(18, 0), time(9, 0), time(9, 0)])
 
-    assert schedule.slots == (time(9, 0), time(18, 0))
-    assert schedule.posts_per_day == 2
+    assert schedule.slots_on(Weekday.MONDAY) == (time(9, 0), time(18, 0))
+    assert schedule.posts_per_week == 14
 
 
 def test_constructor_refuses_unsorted_slots() -> None:
-    with pytest.raises(InvalidValueError, match="по возрастанию"):
-        PublicationSchedule(BERLIN, (time(18, 0), time(9, 0)))
+    week = tuple((time(18, 0), time(9, 0)) if day is Weekday.MONDAY else () for day in Weekday)
+
+    with pytest.raises(InvalidValueError, match=r"MONDAY.*по возрастанию"):
+        PublicationSchedule(BERLIN, week)
 
 
 def test_schedule_without_slots_is_rejected() -> None:
-    with pytest.raises(InvalidValueError, match="хотя бы один слот"):
+    """Канал, который молчит всегда, — это не расписание, а ошибка настройки"""
+    with pytest.raises(InvalidValueError, match="молчит всегда"):
         PublicationSchedule.of("Europe/Berlin", [])
+
+
+def test_week_of_the_wrong_length_is_rejected() -> None:
+    with pytest.raises(InvalidValueError, match="в неделе"):
+        PublicationSchedule(BERLIN, ((time(9, 0),),))
 
 
 def test_slot_carrying_its_own_timezone_is_rejected() -> None:
     """Часовой пояс у расписания один, иначе непонятно, кто главнее"""
+    week = tuple((time(9, 0, tzinfo=UTC),) if day is Weekday.MONDAY else () for day in Weekday)
+
     with pytest.raises(InvalidValueError, match="время суток"):
-        PublicationSchedule(BERLIN, (time(9, 0, tzinfo=UTC),))
+        PublicationSchedule(BERLIN, week)
 
 
 def test_unknown_timezone_is_rejected() -> None:
@@ -179,15 +189,12 @@ def test_answer_is_never_in_the_past_inside_the_repeated_hour() -> None:
 def test_answer_is_always_strictly_later_around_a_transition(
     zone: str, around: datetime, slot: time
 ) -> None:
-    """Свойство, которое обязано держаться всегда
-
-    Моменты берём тиками по UTC, а не из собственного вывода функции: только
-    так на вход попадают значения с fold=1, на которых всё и ломалось.
-    """
+    """Свойство, которое обязано держаться всегда"""
     schedule = PublicationSchedule.of(zone, [slot])
 
     moment = around - timedelta(hours=12)
     finish = around + timedelta(hours=36)
+
     while moment < finish:
         following = schedule.next_slot_after(moment)
         assert following.astimezone(UTC) > moment, f"{zone}: ответ не позже запроса {moment}"
@@ -205,3 +212,43 @@ def test_a_year_of_slots_never_repeats_a_moment() -> None:
 
     assert instants == sorted(instants)
     assert len(set(instants)) == len(instants)
+
+
+def test_channel_can_live_by_a_weekly_rhythm() -> None:
+    """Будни и выходные у новостного канала устроены по-разному"""
+    schedule = PublicationSchedule.by_weekday(
+        "Europe/Berlin",
+        {
+            Weekday.MONDAY: [time(9, 0), time(18, 0)],
+            Weekday.TUESDAY: [time(9, 0), time(18, 0)],
+            Weekday.WEDNESDAY: [time(9, 0), time(18, 0)],
+            Weekday.THURSDAY: [time(9, 0), time(18, 0)],
+            Weekday.FRIDAY: [time(9, 0), time(18, 0)],
+            Weekday.SATURDAY: [time(12, 0)],
+        },
+    )
+
+    assert schedule.posts_per_week == 11
+    assert schedule.slots_on(Weekday.SATURDAY) == (time(12, 0),)
+    assert schedule.is_silent_on(Weekday.SUNDAY)
+    assert not schedule.is_silent_on(Weekday.MONDAY)
+
+
+def test_silent_days_are_skipped_not_filled() -> None:
+    """Воскресенье пропускается целиком, а не подменяется ближайшим слотом"""
+    schedule = PublicationSchedule.by_weekday("Europe/Berlin", {Weekday.SATURDAY: [time(12, 0)]})
+    saturday = datetime(2026, 5, 2, 12, 0, tzinfo=BERLIN)
+
+    assert saturday.weekday() == Weekday.SATURDAY
+    assert schedule.next_slot_after(saturday) == datetime(2026, 5, 9, 12, 0, tzinfo=BERLIN)
+
+
+def test_weekly_channel_survives_losing_its_slot_to_the_clock_change() -> None:
+    schedule = PublicationSchedule.by_weekday("Europe/Berlin", {Weekday.SUNDAY: [time(2, 30)]})
+    monday = datetime(2026, 3, 23, 0, 0, tzinfo=BERLIN)
+
+    following = schedule.next_slot_after(monday)
+
+    assert SPRING_FORWARD.weekday() == Weekday.SUNDAY
+    assert following == datetime(2026, 4, 5, 2, 30, tzinfo=BERLIN)
+    assert (following.date() - monday.date()).days == 13

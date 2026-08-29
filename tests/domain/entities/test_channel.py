@@ -109,5 +109,5 @@ def test_schedule_and_policy_are_replaceable_without_touching_identity() -> None
     )
 
     assert channel.id == original_id
-    assert channel.schedule.posts_per_day == 1
+    assert channel.schedule.posts_per_week == 7
     assert channel.policy.language == Language("kk")
