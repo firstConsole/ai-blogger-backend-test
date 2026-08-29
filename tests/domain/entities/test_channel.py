@@ -13,6 +13,7 @@ from ai_blogger.domain.values.editorial import EditorialPolicy
 from ai_blogger.domain.values.identifiers import ChannelId
 from ai_blogger.domain.values.language import Language
 from ai_blogger.domain.values.schedule import PublicationSchedule
+from ai_blogger.domain.values.sources import FeedUrl, SearchQuery, TopicSources
 from ai_blogger.domain.values.telegram import TelegramChatId
 
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -111,3 +112,24 @@ def test_schedule_and_policy_are_replaceable_without_touching_identity() -> None
     assert channel.id == original_id
     assert channel.schedule.posts_per_week == 7
     assert channel.policy.language == Language("kk")
+
+
+def test_channel_starts_without_sources() -> None:
+    """Канал можно завести и наполнять темами вручную"""
+    assert make_channel().sources.is_empty
+
+
+def test_sources_are_replaceable_without_touching_identity() -> None:
+    channel = make_channel()
+    original_id = channel.id
+
+    channel.update_sources(
+        TopicSources.of(
+            feeds=[FeedUrl.parse("https://news.example.com/rss")],
+            queries=[SearchQuery.parse("нейросети в медицине")],
+        )
+    )
+
+    assert channel.id == original_id
+    assert not channel.sources.is_empty
+    assert channel.sources.feeds[0].host == "news.example.com"

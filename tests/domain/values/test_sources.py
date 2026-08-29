@@ -5,7 +5,15 @@ from __future__ import annotations
 import pytest
 
 from ai_blogger.domain.errors import InvalidValueError
-from ai_blogger.domain.values.sources import MAX_QUERY_LENGTH, MAX_URL_LENGTH, FeedUrl, SearchQuery
+from ai_blogger.domain.values.sources import (
+    MAX_FEEDS,
+    MAX_QUERIES,
+    MAX_QUERY_LENGTH,
+    MAX_URL_LENGTH,
+    FeedUrl,
+    SearchQuery,
+    TopicSources,
+)
 
 
 def test_parse_lowercases_scheme_and_host_but_not_the_path() -> None:
@@ -133,3 +141,61 @@ def test_exotic_whitespace_is_refused_by_the_constructor(whitespace: str) -> Non
 def test_parse_turns_exotic_whitespace_into_ordinary_spaces() -> None:
     """Человеку, который вставил текст из браузера, отказывать незачем"""
     assert SearchQuery.parse("нейросети\xa0в\tмедицине\n").value == "нейросети в медицине"
+
+
+def feed(number: int) -> FeedUrl:
+    return FeedUrl.parse(f"https://news{number}.example.com/rss")
+
+
+def test_sources_drop_repeats_and_keep_the_owner_order() -> None:
+    sources = TopicSources.of(
+        feeds=[feed(2), feed(1), feed(2)],
+        queries=[SearchQuery.parse("нейросети"), SearchQuery.parse("нейросети")],
+    )
+
+    assert sources.feeds == (feed(2), feed(1))
+    assert len(sources.queries) == 1
+
+
+def test_channel_without_sources_is_allowed() -> None:
+    """Темы можно добавлять руками — автоматический сбор просто не работает"""
+    assert TopicSources().is_empty
+    assert not TopicSources.of(feeds=[feed(1)]).is_empty
+
+
+def test_too_many_feeds_are_refused() -> None:
+    with pytest.raises(InvalidValueError, match="захлебнётся"):
+        TopicSources.of(feeds=[feed(number) for number in range(MAX_FEEDS + 1)])
+
+
+def test_too_many_queries_are_refused() -> None:
+    with pytest.raises(InvalidValueError, match="бесплатный бюджет"):
+        TopicSources.of(
+            queries=[SearchQuery.parse(f"запрос {number}") for number in range(MAX_QUERIES + 1)]
+        )
+
+
+def test_constructor_refuses_a_repeated_feed() -> None:
+    with pytest.raises(InvalidValueError, match="дважды"):
+        TopicSources(feeds=(feed(1), feed(1)))
+
+
+def test_search_budget_is_counted_before_the_bill_arrives() -> None:
+    """Цикл в полчаса — это 48 опросов в сутки, и бюджет кончается втрое раньше
+
+    Считать это нужно при настройке канала: у Brave бесплатны первые 600
+    запросов в месяц, и один-единственный запрос, опрашиваемый каждые полчаса,
+    даёт 1440. Поиск придётся опрашивать реже, чем ленты.
+    """
+    sources = TopicSources.of(queries=[SearchQuery.parse("нейросети")])
+
+    assert sources.monthly_search_requests(cycles_per_day=48) == 1440
+    assert not sources.fits_free_search_budget(cycles_per_day=48)
+
+    assert sources.monthly_search_requests(cycles_per_day=20) == 600
+    assert sources.fits_free_search_budget(cycles_per_day=20)
+
+
+def test_budget_of_an_empty_set_costs_nothing() -> None:
+    assert TopicSources().monthly_search_requests(cycles_per_day=48) == 0
+    assert TopicSources().fits_free_search_budget(cycles_per_day=48)

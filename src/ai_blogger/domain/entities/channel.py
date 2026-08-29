@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Self
 
 from ai_blogger.domain.errors import ChannelPausedError, InvalidValueError
 from ai_blogger.domain.values.identifiers import ChannelId
+from ai_blogger.domain.values.sources import TopicSources
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -25,6 +26,7 @@ class Channel:
     title: str
     schedule: PublicationSchedule
     policy: EditorialPolicy
+    sources: TopicSources
     is_active: bool = True
 
     def __post_init__(self) -> None:
@@ -38,14 +40,20 @@ class Channel:
         title: str,
         schedule: PublicationSchedule,
         policy: EditorialPolicy,
+        sources: TopicSources | None = None,
     ) -> Self:
-        """Завести новый канал"""
+        """Завести новый канал
+
+        Без источников канал тоже живёт: темы владелец добавляет руками,
+        автоматический сбор просто не работает.
+        """
         return cls(
             id=ChannelId.new(),
             chat_id=chat_id,
             title=title.strip(),
             schedule=schedule,
             policy=policy,
+            sources=sources if sources is not None else TopicSources(),
         )
 
     def __eq__(self, other: object) -> bool:
@@ -69,6 +77,10 @@ class Channel:
     def apply_policy(self, policy: EditorialPolicy) -> None:
         """Заменить редполитику"""
         self.policy = policy
+
+    def update_sources(self, sources: TopicSources) -> None:
+        """Заменить набор источников"""
+        self.sources = sources
 
     def pause(self) -> None:
         """Остановить канал: посты копятся, но не выходят"""

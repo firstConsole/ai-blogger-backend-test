@@ -4,15 +4,22 @@ from __future__ import annotations
 
 import ipaddress
 from dataclasses import dataclass
-from typing import Self
+from typing import TYPE_CHECKING, Self
 from urllib.parse import urlsplit, urlunsplit
 
 from ai_blogger.domain.errors import InvalidValueError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 ALLOWED_SCHEMES = frozenset({"http", "https"})
 MAX_URL_LENGTH = 2048
 MAX_QUERY_LENGTH = 200
 BLOCKED_HOSTS = frozenset({"localhost", "localhost.localdomain", "ip6-localhost", "metadata"})
+MAX_FEEDS = 40
+MAX_QUERIES = 20
+BRAVE_FREE_MONTHLY_QUERIES = 600
+DAYS_IN_BILLING_MONTH = 30
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,3 +129,46 @@ def _reject_numeric_lookalike(host: str) -> None:
             f"«{host}» не похоже на доменное имя: так записывают числовой адрес, "
             "чтобы обойти проверку"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class TopicSources:
+    """Источники тем канала: ленты и поисковые запросы"""
+
+    feeds: tuple[FeedUrl, ...] = ()
+    queries: tuple[SearchQuery, ...] = ()
+
+    def __post_init__(self) -> None:
+        if len(set(self.feeds)) != len(self.feeds):
+            raise InvalidValueError("одна и та же лента добавлена дважды")
+        if len(set(self.queries)) != len(self.queries):
+            raise InvalidValueError("один и тот же запрос добавлен дважды")
+        if len(self.feeds) > MAX_FEEDS:
+            raise InvalidValueError(
+                f"лент больше {MAX_FEEDS}: каждую опрашивают в каждом цикле, "
+                f"и очередь захлебнётся раньше, чем принесёт пользу"
+            )
+        if len(self.queries) > MAX_QUERIES:
+            raise InvalidValueError(
+                f"запросов больше {MAX_QUERIES}: столько не укладывается "
+                "в бесплатный бюджет поиска даже при одном цикле в сутки"
+            )
+
+    @classmethod
+    def of(cls, feeds: Iterable[FeedUrl] = (), queries: Iterable[SearchQuery] = ()) -> Self:
+        """Собрать набор, выбросив повторы и сохранив порядок владельца"""
+        return cls(tuple(dict.fromkeys(feeds)), tuple(dict.fromkeys(queries)))
+
+    @property
+    def is_empty(self) -> bool:
+        """Нечего опрашивать — темы могут приходить только вручную"""
+        return not self.feeds and not self.queries
+
+    def monthly_search_requests(self, cycles_per_day: int) -> int:
+        """Сколько запросов к поиску уйдёт за месяц при такой частоте опроса"""
+        if cycles_per_day < 0:
+            raise InvalidValueError("частота опроса не может быть отрицательной")
+        return len(self.queries) * cycles_per_day * DAYS_IN_BILLING_MONTH
+
+    def fits_free_search_budget(self, cycles_per_day: int) -> bool:
+        return self.monthly_search_requests(cycles_per_day) <= BRAVE_FREE_MONTHLY_QUERIES
