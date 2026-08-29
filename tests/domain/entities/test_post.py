@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
 import pytest
 
 from ai_blogger.domain.entities.post import (
+    MAX_BODY_LENGTH,
     MAX_CRITIQUE_LENGTH,
     MAX_FAILURE_REASON_LENGTH,
     MAX_IMAGE_PROMPT_LENGTH,
     Post,
 )
 from ai_blogger.domain.errors import IllegalTransitionError, InvalidValueError
-from ai_blogger.domain.values.editorial import EditorialPolicy
+from ai_blogger.domain.values.editorial import CAPTION_LIMIT, MESSAGE_LIMIT, EditorialPolicy
 from ai_blogger.domain.values.identifiers import ChannelId, MediaId, PostId, TopicId
 from ai_blogger.domain.values.language import Language
 from ai_blogger.domain.values.post_status import PostStatus
 from ai_blogger.domain.values.tags import Tag
+from ai_blogger.domain.values.telegram import TelegramMessageId, TelegramUserId
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 CHANNEL = ChannelId.new()
 TOPIC = TopicId.new()
@@ -193,3 +201,79 @@ def test_channel_without_images_does_not_ask_for_one() -> None:
 
     assert post.fits(make_policy(requires_image=False))
     assert not post.fits(make_policy(requires_image=True))
+
+
+def approved_post() -> Post:
+    post = make_post()
+    post.send_to_review()
+    post.approve(publish_at=datetime(2026, 5, 1, 18, 0, tzinfo=UTC), reviewed_by=TelegramUserId(1))
+    return post
+
+
+@pytest.mark.parametrize(
+    ("action", "call"),
+    [
+        ("правка текста", lambda post: post.rewrite("Другой текст поста. " * 10, ())),
+        ("привязка картинки", lambda post: post.attach_image(MediaId.new())),
+        ("вердикт критика", lambda post: post.record_critique("поздний вердикт")),
+    ],
+)
+def test_content_cannot_be_changed_after_approval(
+    action: str, call: Callable[[Post], None]
+) -> None:
+    """Иначе подтверждение перестаёт что-либо значить
+
+    Человек одобряет один текст, а в канал уходит другой — и запись о том,
+    кто одобрил, указывает на решение по прежнему тексту.
+    """
+    with pytest.raises(IllegalTransitionError, match=action):
+        call(approved_post())
+
+
+def test_published_post_is_frozen() -> None:
+    """Строка в базе обязана совпадать с тем, что висит в Telegram"""
+    post = approved_post()
+    post.mark_published(
+        message_id=TelegramMessageId(42), published_at=datetime(2026, 5, 1, 18, 0, tzinfo=UTC)
+    )
+
+    with pytest.raises(IllegalTransitionError):
+        post.rewrite("подмена уже опубликованного", ())
+
+
+def test_rework_reopens_the_post_for_editing() -> None:
+    """Правка одобренного возможна, но только через возврат человеку"""
+    post = approved_post()
+    post.return_to_review()
+    post.send_back_for_rework(note="перепиши", reviewed_by=TelegramUserId(1))
+
+    post.rewrite("Переписанный текст поста. " * 10, (Tag.parse("новости"),))
+
+    assert post.status is PostStatus.DRAFT
+
+
+def test_zero_byte_from_a_feed_is_refused() -> None:
+    """Postgres не хранит нулевой байт, и падение случилось бы уже в транзакции"""
+    with pytest.raises(InvalidValueError, match="нулевой байт"):
+        make_post(body="Текст поста\x00с мусором из битой кодировки. " * 5)
+
+
+def test_control_characters_are_refused() -> None:
+    with pytest.raises(InvalidValueError, match="управляющий символ"):
+        make_post(body="Текст поста\x07со звонком терминала. " * 5)
+
+
+def test_body_longer_than_telegram_allows_is_refused() -> None:
+    """Ответ модели любого размера не должен уезжать в базу"""
+    with pytest.raises(InvalidValueError, match="не примет сообщение"):
+        make_post(body="я" * (MAX_BODY_LENGTH + 1))
+
+
+def test_post_too_long_for_a_caption_is_flagged() -> None:
+    """Такой пост Telegram не примет одним сообщением с картинкой"""
+    post = make_post(body="я" * (CAPTION_LIMIT + 1))
+    post.attach_image(MediaId.new())
+
+    complaints = post.violations(make_policy(min_body_length=100, max_body_length=MESSAGE_LIMIT))
+
+    assert any("подпись к фото" in complaint for complaint in complaints)

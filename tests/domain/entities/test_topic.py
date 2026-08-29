@@ -150,3 +150,25 @@ def test_direction_does_not_matter() -> None:
     second = make_topic(discovered_at=FOUND_AT + timedelta(hours=5))
 
     assert second.is_duplicate_of(first) == first.is_duplicate_of(second)
+
+
+def test_topic_remembers_where_it_came_from() -> None:
+    """Без этого непонятно, какой источник приносит темы, доходящие до канала"""
+    topic = Topic.discover(
+        channel_id=CHANNEL,
+        title="Нейросети научились считать",
+        origin=TopicOrigin.FEED,
+        discovered_at=FOUND_AT,
+        embedding=ABOUT_NEURAL_NETWORKS,
+        url=SourceUrl.parse("https://news.example.com/a"),
+        discovered_from="https://news.example.com/rss",
+    )
+
+    assert topic.discovered_from == "https://news.example.com/rss"
+    assert make_topic().discovered_from is None
+
+
+def test_zero_byte_in_a_feed_title_is_refused() -> None:
+    """RSS с битой кодировкой приносит нулевые байты регулярно"""
+    with pytest.raises(InvalidValueError, match="нулевой байт"):
+        make_topic(title="Заголовок\x00с мусором")

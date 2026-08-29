@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import struct
 
 import pytest
 
@@ -94,3 +95,22 @@ def test_deduplication_window_matches_the_plan() -> None:
     """Трое суток из ТЗ: дальше та же новость — уже возвращение к теме"""
     assert DEDUPLICATION_WINDOW.total_seconds() == 72 * 3600
     assert 0.0 < DUPLICATE_THRESHOLD < 1.0
+
+
+def test_vector_survives_a_round_trip_through_float32() -> None:
+    """Так его вернёт pgvector, который хранит координаты в float4
+
+    С прежним допуском 1e-9 вектор, записанный и прочитанный обратно,
+    забраковал бы сам себя: на 384 измерениях длина уплывает до 8e-9.
+    """
+    generator = random.Random(11)  # noqa: S311 — тестовые данные, а не криптография
+
+    for _ in range(200):
+        original = Embedding.of(generator.uniform(-1, 1) for _ in range(384))
+        as_float32 = tuple(
+            struct.unpack("f", struct.pack("f", value))[0] for value in original.values
+        )
+
+        restored = Embedding(as_float32)
+
+        assert restored.cosine_similarity(original) == pytest.approx(1.0)

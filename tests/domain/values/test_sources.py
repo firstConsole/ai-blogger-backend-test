@@ -69,9 +69,35 @@ def test_service_ranges_are_refused(raw: str) -> None:
         SourceUrl.parse(raw)
 
 
-def test_localhost_by_name_is_refused() -> None:
-    with pytest.raises(InvalidValueError, match="сам сервер"):
-        SourceUrl.parse("http://localhost/rss")
+@pytest.mark.parametrize(
+    "host",
+    [
+        "localhost",
+        "localhost.",
+        "\uff4c\uff4f\uff43\uff41\uff4c\uff48\uff4f\uff53\uff54",
+        "metadata.google.internal",
+        "instance-data",
+        "wiki.internal",
+        "gitlab.local",
+        "printer.home.arpa",
+    ],
+)
+def test_internal_names_are_refused(host: str) -> None:
+    """Блок-лист обходится тремя способами, и все три закрыты
+
+    Точка в конце — корректная запись абсолютного имени, «localhost.» тоже
+    указывает на сам сервер. Полноширинные буквы выглядят непохоже, а
+    резолвятся в то же самое. А внутренние зоны вроде .internal и .local
+    просто не бывают источниками новостей.
+    """
+    with pytest.raises(InvalidValueError, match="внутренн"):
+        SourceUrl.parse(f"http://{host}/rss")
+
+
+def test_single_label_host_is_refused() -> None:
+    """intranet, router, wiki — такие имена живут только внутри периметра"""
+    with pytest.raises(InvalidValueError, match="без доменной зоны"):
+        SourceUrl.parse("http://intranet/rss")
 
 
 @pytest.mark.parametrize("host", ["2130706433", "0x7f000001", "0177.0.0.1"])

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Self
@@ -16,7 +17,23 @@ if TYPE_CHECKING:
 ALLOWED_SCHEMES = frozenset({"http", "https"})
 MAX_URL_LENGTH = 2048
 MAX_QUERY_LENGTH = 200
-BLOCKED_HOSTS = frozenset({"localhost", "localhost.localdomain", "ip6-localhost", "metadata"})
+BLOCKED_HOSTS = frozenset(
+    {
+        "localhost",
+        "localhost.localdomain",
+        "ip6-localhost",
+        "metadata",
+        "instance-data",
+    }
+)
+
+BLOCKED_SUFFIXES = (
+    ".localhost",
+    ".local",
+    ".internal",
+    ".localdomain",
+    ".home.arpa",
+)
 MAX_FEEDS = 40
 MAX_QUERIES = 20
 BRAVE_FREE_MONTHLY_QUERIES = 600
@@ -44,10 +61,8 @@ class SourceUrl:
         host = _hostname(parts.netloc)
         if not host:
             raise InvalidValueError(f"в адресе не разобрать хост: «{self.value}»")
-        if host in BLOCKED_HOSTS:
-            raise InvalidValueError(f"«{host}» — это сам сервер, а не источник новостей")
 
-        _check_host(host)
+        _check_host(_canonical_host(host))
 
         if self.value != _normalized(self.value):
             raise InvalidValueError("адрес не приведён к каноническому виду, используйте parse")
@@ -107,17 +122,37 @@ def _hostname(netloc: str) -> str:
         return ""
 
 
+def _canonical_host(host: str) -> str:
+    normalized = unicodedata.normalize("NFKC", host).lower().rstrip(".")
+
+    try:
+        return normalized.encode("idna").decode("ascii")
+    except UnicodeError:
+        return normalized
+
+
 def _check_host(host: str) -> None:
+    if host in BLOCKED_HOSTS or host.endswith(BLOCKED_SUFFIXES):
+        raise InvalidValueError(f"«{host}» — это внутреннее имя, а не источник новостей")
+
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
         _reject_numeric_lookalike(host)
+        _reject_single_label(host)
         return
 
     if not address.is_global:
         raise InvalidValueError(
             f"адрес {host} принадлежит служебному диапазону — оттуда новостей не бывает, "
             "зато бывают ключи доступа самой машины"
+        )
+
+
+def _reject_single_label(host: str) -> None:
+    if "." not in host:
+        raise InvalidValueError(
+            f"«{host}» — имя без доменной зоны, такие бывают только во внутренней сети"
         )
 
 

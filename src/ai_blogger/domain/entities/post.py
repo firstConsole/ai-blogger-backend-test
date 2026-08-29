@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
 from ai_blogger.domain.errors import IllegalTransitionError, InvalidValueError
+from ai_blogger.domain.values.editorial import CAPTION_LIMIT, MESSAGE_LIMIT
 from ai_blogger.domain.values.identifiers import PostId
 from ai_blogger.domain.values.post_status import PostStatus
+from ai_blogger.domain.values.text import ensure_storable
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -17,6 +19,7 @@ if TYPE_CHECKING:
     from ai_blogger.domain.values.tags import Tag
     from ai_blogger.domain.values.telegram import TelegramMessageId, TelegramUserId
 
+MAX_BODY_LENGTH = MESSAGE_LIMIT
 MAX_IMAGE_PROMPT_LENGTH = 1000
 MAX_CRITIQUE_LENGTH = 4000
 MAX_FAILURE_REASON_LENGTH = 500
@@ -77,8 +80,31 @@ class Post:
     def __hash__(self) -> int:
         return hash(self.id)
 
-    def rewrite(self, body: str, tags: tuple[Tag, ...] = ()) -> None:
-        """Заменить текст: так выглядит повторная генерация после доработки"""
+    def _ensure_draft(self, action: str) -> None:
+        """Содержимое меняется только у черновика
+
+        Без этой проверки подтверждение перестаёт что-либо значить: человек
+        одобряет один текст, а в канал уходит другой. У опубликованного поста
+        последствия хуже — строка в базе расходится с сообщением, которое уже
+        висит в Telegram, и аналитика привязывается к тексту, которого читатель
+        не видел.
+
+        Нужно поправить одобренный пост — верните его человеку через
+        return_to_review, одобрение при этом аннулируется.
+        """
+        if self.status is not PostStatus.DRAFT:
+            raise IllegalTransitionError(
+                f"{action}: менять можно только черновик, а пост в статусе «{self.status}»"
+            )
+
+    def rewrite(self, body: str, tags: tuple[Tag, ...]) -> None:
+        """Заменить текст и теги: так выглядит повторная генерация
+
+        Теги обязательны, без значения по умолчанию: с ним вызов rewrite(body)
+        молча стирал бы уже подобранные теги.
+        """
+        self._ensure_draft("правка текста")
+
         stripped = body.strip()
 
         _check_body(stripped)
@@ -91,10 +117,14 @@ class Post:
 
     def attach_image(self, image_id: MediaId) -> None:
         """Привязать сгенерированную картинку"""
+        self._ensure_draft("привязка картинки")
+
         self.image_id = image_id
 
     def record_critique(self, critique: str) -> None:
         """Сохранить вердикт критика"""
+        self._ensure_draft("вердикт критика")
+
         stripped = critique.strip()
 
         if not stripped:
@@ -102,6 +132,8 @@ class Post:
 
         if len(stripped) > MAX_CRITIQUE_LENGTH:
             raise InvalidValueError(f"вердикт критика длиннее {MAX_CRITIQUE_LENGTH} символов")
+
+        ensure_storable(stripped, "вердикт критика")
 
         self.critique = stripped
 
@@ -203,6 +235,12 @@ class Post:
             )
         if policy.requires_image and self.image_id is None:
             found.append("канал выходит с картинками, а картинки нет")
+
+        if policy.requires_image and len(self.body) > CAPTION_LIMIT:
+            found.append(
+                f"подпись к фото у Telegram не длиннее {CAPTION_LIMIT} знаков, "
+                f"а в посте {len(self.body)}: одним сообщением он не уйдёт"
+            )
         return tuple(found)
 
     def fits(self, policy: EditorialPolicy) -> bool:
@@ -215,6 +253,14 @@ def _check_body(body: str) -> None:
         raise InvalidValueError("пустой пост публиковать нечего")
     if body != body.strip():
         raise InvalidValueError("в тексте поста лишние пробелы по краям")
+
+    if len(body) > MAX_BODY_LENGTH:
+        raise InvalidValueError(
+            f"Telegram не примет сообщение длиннее {MAX_BODY_LENGTH} знаков, "
+            f"а модель вернула {len(body)}"
+        )
+
+    ensure_storable(body, "текст поста")
 
 
 def _reason(reason: str) -> str:
@@ -234,6 +280,8 @@ def _note(note: str) -> str:
         raise InvalidValueError("решение без объяснения ничего не объясняет")
     if len(stripped) > MAX_REVIEW_NOTE_LENGTH:
         raise InvalidValueError(f"комментарий длиннее {MAX_REVIEW_NOTE_LENGTH} символов")
+
+    ensure_storable(stripped, "комментарий")
     return stripped
 
 
@@ -247,3 +295,5 @@ def _check_image_prompt(prompt: str) -> None:
         raise InvalidValueError("пустой промпт картинки ничего не нарисует")
     if len(prompt) > MAX_IMAGE_PROMPT_LENGTH:
         raise InvalidValueError(f"промпт картинки длиннее {MAX_IMAGE_PROMPT_LENGTH} символов")
+
+    ensure_storable(prompt, "промпт картинки")
