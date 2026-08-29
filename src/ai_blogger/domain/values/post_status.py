@@ -17,7 +17,8 @@ class PostStatus(StrEnum):
     APPROVED = "approved"
     PUBLISHED = "published"
     REJECTED = "rejected"
-    FAILED = "failed"
+    GENERATION_FAILED = "generation_failed"
+    PUBLICATION_FAILED = "publication_failed"
 
     @property
     def is_final(self) -> bool:
@@ -35,14 +36,15 @@ class PostStatus(StrEnum):
 
 
 ALLOWED_TRANSITIONS: Final[Mapping[PostStatus, frozenset[PostStatus]]] = {
-    PostStatus.DRAFT: frozenset({PostStatus.NEEDS_REVIEW, PostStatus.FAILED}),
+    PostStatus.DRAFT: frozenset({PostStatus.NEEDS_REVIEW, PostStatus.GENERATION_FAILED}),
     PostStatus.NEEDS_REVIEW: frozenset(
         {PostStatus.APPROVED, PostStatus.REJECTED, PostStatus.DRAFT}
     ),
     PostStatus.APPROVED: frozenset(
-        {PostStatus.PUBLISHED, PostStatus.FAILED, PostStatus.NEEDS_REVIEW}
+        {PostStatus.PUBLISHED, PostStatus.PUBLICATION_FAILED, PostStatus.NEEDS_REVIEW}
     ),
-    PostStatus.FAILED: frozenset({PostStatus.DRAFT, PostStatus.APPROVED}),
+    PostStatus.GENERATION_FAILED: frozenset({PostStatus.DRAFT}),
+    PostStatus.PUBLICATION_FAILED: frozenset({PostStatus.APPROVED}),
     PostStatus.PUBLISHED: frozenset(),
     PostStatus.REJECTED: frozenset(),
 }

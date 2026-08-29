@@ -12,6 +12,8 @@ from ai_blogger.domain.errors import InvalidValueError
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+SEARCH_HORIZON_DAYS = 10
+
 
 @dataclass(frozen=True, slots=True)
 class PublicationSchedule:
@@ -42,25 +44,33 @@ class PublicationSchedule:
         """Сколько постов канал выпускает в сутки"""
         return len(self.slots)
 
-    def exists_on_the_wall_clock(self, moment: datetime) -> bool:
-        restored = moment.astimezone(UTC).astimezone(self.timezone)
-        return restored.replace(tzinfo=None) == moment.replace(tzinfo=None)
+    def wall_clock_exists(self, reading: datetime) -> bool:
+        if reading.tzinfo is not None:
+            raise InvalidValueError("показание часов задаётся без часового пояса")
+
+        attached = reading.replace(tzinfo=self.timezone)
+        restored = attached.astimezone(UTC).astimezone(self.timezone)
+        return restored.replace(tzinfo=None) == reading
 
     def next_slot_after(self, moment: datetime) -> datetime:
+        """Ближайшее время публикации после указанного момента, в часовом поясе канала"""
         if moment.tzinfo is None:
             raise InvalidValueError("момент без часового пояса сравнивать не с чем")
 
-        local = moment.astimezone(self.timezone)
-        today = local.date()
+        instant = moment.astimezone(UTC)
+        first_day = moment.astimezone(self.timezone).date()
 
-        for day in (today, today + timedelta(days=1)):
+        for offset in range(SEARCH_HORIZON_DAYS):
+            day = first_day + timedelta(days=offset)
             for slot in self.slots:
-                candidate = datetime.combine(day, slot, tzinfo=self.timezone)
-
-                if candidate > local and self.exists_on_the_wall_clock(candidate):
+                reading = datetime.combine(day, slot)
+                if not self.wall_clock_exists(reading):
+                    continue
+                candidate = reading.replace(tzinfo=self.timezone)
+                if candidate.astimezone(UTC) > instant:
                     return candidate
 
         raise InvalidValueError(
-            "за двое суток не нашлось ни одного слота — часовой пояс "
-            f"«{self.timezone.key}» переставлял часы больше чем на день"
+            f"за {SEARCH_HORIZON_DAYS} суток в поясе «{self.timezone.key}» не нашлось "
+            "ни одного существующего слота"
         )

@@ -11,8 +11,19 @@ from ai_blogger.domain.errors import InvalidValueError
 from ai_blogger.domain.values.schedule import PublicationSchedule
 
 BERLIN = ZoneInfo("Europe/Berlin")
+
 SPRING_FORWARD = datetime(2026, 3, 29, tzinfo=BERLIN).date()
 FALL_BACK = datetime(2026, 10, 25, tzinfo=BERLIN).date()
+
+#: Дни, когда часы переводят. Именно вокруг них ломается всё интересное.
+TRANSITIONS = [
+    ("Europe/Berlin", datetime(2026, 3, 29, tzinfo=UTC), time(2, 30)),
+    ("Europe/Berlin", datetime(2026, 10, 25, tzinfo=UTC), time(2, 30)),
+    ("America/New_York", datetime(2026, 3, 8, tzinfo=UTC), time(1, 30)),
+    ("America/New_York", datetime(2026, 11, 1, tzinfo=UTC), time(1, 30)),
+    ("Australia/Adelaide", datetime(2026, 4, 5, tzinfo=UTC), time(2, 30)),
+    ("America/Santiago", datetime(2026, 9, 6, tzinfo=UTC), time(0, 0)),
+]
 
 
 def test_of_sorts_slots_and_drops_duplicates() -> None:
@@ -45,6 +56,7 @@ def test_unknown_timezone_is_rejected() -> None:
 
 def test_next_slot_is_found_within_the_same_day() -> None:
     schedule = PublicationSchedule.of("Europe/Berlin", [time(9, 0), time(18, 0)])
+
     following = schedule.next_slot_after(datetime(2026, 5, 1, 10, 0, tzinfo=BERLIN))
 
     assert following == datetime(2026, 5, 1, 18, 0, tzinfo=BERLIN)
@@ -52,6 +64,7 @@ def test_next_slot_is_found_within_the_same_day() -> None:
 
 def test_after_the_last_slot_the_next_one_is_tomorrow() -> None:
     schedule = PublicationSchedule.of("Europe/Berlin", [time(9, 0), time(18, 0)])
+
     following = schedule.next_slot_after(datetime(2026, 5, 1, 23, 0, tzinfo=BERLIN))
 
     assert following == datetime(2026, 5, 2, 9, 0, tzinfo=BERLIN)
@@ -74,21 +87,26 @@ def test_naive_moment_is_rejected() -> None:
         schedule.next_slot_after(datetime(2026, 5, 1, 10, 0))  # noqa: DTZ001
 
 
-def test_slot_inside_the_lost_hour_does_not_exist() -> None:
+def test_wall_clock_check_wants_a_bare_reading() -> None:
+    """Вопрос о показаниях часов, а не о моменте: у момента они есть всегда"""
+    schedule = PublicationSchedule.of("Europe/Berlin", [time(9, 0)])
+
+    with pytest.raises(InvalidValueError, match="без часового пояса"):
+        schedule.wall_clock_exists(datetime(2026, 5, 1, 9, 0, tzinfo=UTC))
+
+
+def test_reading_inside_the_lost_hour_does_not_exist() -> None:
     """Весной часы прыгают с 02:00 на 03:00 — времени 02:30 в этот день нет"""
     schedule = PublicationSchedule.of("Europe/Berlin", [time(2, 30)])
-    lost = datetime.combine(SPRING_FORWARD, time(2, 30), tzinfo=BERLIN)
 
-    assert not schedule.exists_on_the_wall_clock(lost)
-    assert schedule.exists_on_the_wall_clock(lost + timedelta(days=1))
+    assert not schedule.wall_clock_exists(datetime.combine(SPRING_FORWARD, time(2, 30)))
+    assert schedule.wall_clock_exists(
+        datetime.combine(SPRING_FORWARD + timedelta(days=1), time(2, 30))
+    )
 
 
 def test_two_slots_never_collapse_into_one_moment_on_the_transition_day() -> None:
-    """Ради этого случая проверка на существование и заводилась
-
-    Без неё слоты 02:30 и 03:30 указывали бы на одну и ту же секунду UTC,
-    и канал раз в год выпускал бы два поста одновременно.
-    """
+    """Без проверки на существование слоты 02:30 и 03:30 указывали бы на одну секунду"""
     schedule = PublicationSchedule.of("Europe/Berlin", [time(2, 30), time(3, 30)])
 
     first = schedule.next_slot_after(datetime.combine(SPRING_FORWARD, time(0, 30), tzinfo=BERLIN))
@@ -110,6 +128,27 @@ def test_only_slot_lost_to_the_transition_moves_to_the_next_day() -> None:
     assert following.date() == SPRING_FORWARD + timedelta(days=1)
 
 
+def test_slot_lost_tomorrow_is_found_the_day_after() -> None:
+    """Окна в двое суток не хватало: спрос накануне перехода приводил к отказу"""
+    schedule = PublicationSchedule.of("Europe/Berlin", [time(2, 30)])
+
+    following = schedule.next_slot_after(
+        datetime.combine(SPRING_FORWARD - timedelta(days=1), time(3, 0), tzinfo=BERLIN)
+    )
+
+    assert following.date() == SPRING_FORWARD + timedelta(days=1)
+
+
+def test_timezone_switching_at_midnight_does_not_break_the_scheduler() -> None:
+    """Чили переводит часы в 24:00 — полуночного слота в этот день нет вовсе"""
+    schedule = PublicationSchedule.of("America/Santiago", [time(0, 0)])
+    santiago = ZoneInfo("America/Santiago")
+
+    following = schedule.next_slot_after(datetime(2026, 9, 5, 12, 0, tzinfo=santiago))
+
+    assert following > datetime(2026, 9, 5, 12, 0, tzinfo=santiago)
+
+
 def test_repeated_hour_in_autumn_gives_one_publication_not_two() -> None:
     """Осенью 02:30 наступает дважды, но пост выходит один раз"""
     schedule = PublicationSchedule.of("Europe/Berlin", [time(2, 30)])
@@ -118,20 +157,51 @@ def test_repeated_hour_in_autumn_gives_one_publication_not_two() -> None:
     second = schedule.next_slot_after(first)
 
     assert first.date() == FALL_BACK
-    assert first.fold == 0
     assert second.date() == FALL_BACK + timedelta(days=1)
 
 
-def test_a_whole_year_of_slots_never_repeats_a_moment() -> None:
+def test_answer_is_never_in_the_past_inside_the_repeated_hour() -> None:
+    """Ошибка, которую не поймал годовой прогон, скармливавший функции её же вывод
+
+    Внутри повторяющегося часа момент имеет fold=1, а собранный слот — fold=0.
+    Сравнение двух aware-datetime с одним и тем же поясом идёт по настенным
+    часам и fold игнорирует (PEP 495), поэтому уже прошедший слот считался
+    будущим. Планировщик после перезапуска публиковал бы пост второй раз.
+    """
+    schedule = PublicationSchedule.of("Europe/Berlin", [time(2, 30)])
+    moment = datetime(2026, 10, 25, 1, 0, tzinfo=UTC)
+
+    assert moment.astimezone(BERLIN).fold == 1
+    assert schedule.next_slot_after(moment).astimezone(UTC) > moment
+
+
+@pytest.mark.parametrize(("zone", "around", "slot"), TRANSITIONS)
+def test_answer_is_always_strictly_later_around_a_transition(
+    zone: str, around: datetime, slot: time
+) -> None:
+    """Свойство, которое обязано держаться всегда
+
+    Моменты берём тиками по UTC, а не из собственного вывода функции: только
+    так на вход попадают значения с fold=1, на которых всё и ломалось.
+    """
+    schedule = PublicationSchedule.of(zone, [slot])
+
+    moment = around - timedelta(hours=12)
+    finish = around + timedelta(hours=36)
+    while moment < finish:
+        following = schedule.next_slot_after(moment)
+        assert following.astimezone(UTC) > moment, f"{zone}: ответ не позже запроса {moment}"
+        moment += timedelta(minutes=15)
+
+
+def test_a_year_of_slots_never_repeats_a_moment() -> None:
     schedule = PublicationSchedule.of("Europe/Berlin", [time(2, 30), time(3, 30), time(14, 0)])
 
     moment = datetime(2026, 1, 1, tzinfo=BERLIN)
-    seen: list[datetime] = []
-
+    instants: list[datetime] = []
     while moment.year == 2026:
         moment = schedule.next_slot_after(moment)
-        seen.append(moment)
+        instants.append(moment.astimezone(UTC))
 
-    instants = [point.astimezone(UTC) for point in seen]
     assert instants == sorted(instants)
     assert len(set(instants)) == len(instants)

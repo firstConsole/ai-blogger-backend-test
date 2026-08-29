@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from typing import Self
 
@@ -11,7 +12,7 @@ MAX_TAG_LENGTH = 64
 
 
 def _is_allowed(character: str) -> bool:
-    return character.isalnum() or character == "_"
+    return character.isalpha() or character.isdecimal() or character == "_"
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +24,11 @@ class Tag:
     def __post_init__(self) -> None:
         if not self.value:
             raise InvalidValueError("тег не может быть пустым")
+
+        if unicodedata.normalize("NFC", self.value) != self.value:
+            raise InvalidValueError(
+                f"тег должен быть в нормальной форме NFC, используйте parse: «{self.value}»"
+            )
 
         if len(self.value) > MAX_TAG_LENGTH:
             raise InvalidValueError(f"тег длиннее {MAX_TAG_LENGTH} символов: «{self.value}»")
@@ -42,8 +48,8 @@ class Tag:
 
     @classmethod
     def parse(cls, raw: str) -> Self:
-        """Привести к каноническому виду то, что написал человек или предложила модель"""
-        return cls(raw.strip().lstrip("#").strip().lower())
+        normalized = unicodedata.normalize("NFC", raw)
+        return cls(normalized.strip().lstrip("#").strip().lower())
 
     def __str__(self) -> str:
         return f"#{self.value}"

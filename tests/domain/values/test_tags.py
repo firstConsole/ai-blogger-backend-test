@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import unicodedata
+
 import pytest
 
 from ai_blogger.domain.errors import InvalidValueError
@@ -67,3 +69,28 @@ def test_any_language_is_allowed() -> None:
 
 def test_string_form_is_ready_for_publication() -> None:
     assert str(Tag.parse("нейросети")) == "#нейросети"
+
+
+@pytest.mark.parametrize("character", ["²", "①", "Ⅷ", "½"])
+def test_lookalike_digits_are_not_tag_characters(character: str) -> None:
+    """isalnum() их пропускает, хотя частью хештега они не являются"""
+    with pytest.raises(InvalidValueError, match="буквы, цифры"):
+        Tag.parse(f"тег{character}")
+
+
+def test_visually_identical_tags_are_the_same_tag() -> None:
+    """«é» бывает одним символом, а бывает «e» плюс знак ударения
+
+    На экране не отличить, а строки разные. Без нормализации счётчики
+    раздваивались бы, и половина таких тегов вдобавок отвергалась.
+    """
+    composed = unicodedata.normalize("NFC", "café")
+    decomposed = unicodedata.normalize("NFD", "café")
+
+    assert composed != decomposed
+    assert Tag.parse(composed) == Tag.parse(decomposed)
+
+
+def test_constructor_refuses_a_decomposed_value() -> None:
+    with pytest.raises(InvalidValueError, match="NFC"):
+        Tag(unicodedata.normalize("NFD", "café"))
