@@ -2,3 +2,15 @@
 
 
 class DomainError(Exception): ...
+
+
+class InvalidValueError(DomainError, ValueError):
+    """Значение не проходит правила предметной области"""
+
+
+class IllegalTransitionError(DomainError):
+    """Попытка перевести сущность в состояние, недостижимое из текущего"""
+
+
+class ChannelPausedError(DomainError):
+    """Действие требует активного канала, а канал остановлен"""

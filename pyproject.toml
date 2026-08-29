@@ -76,7 +76,13 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ARG", "PLR2004", "S101", "S105", "S106", "SLF"]
+# FBT001/FBT002 — правило про нечитаемый вызов f(True). В параметризованных
+# тестах аргументы подставляет pytest по имени, вызова с голым True там нет.
+"tests/**" = ["ARG", "FBT001", "FBT002", "PLR2004", "S101", "S105", "S106", "SLF"]
+
+[tool.ruff.lint.pylint]
+max-args = 10
+max-positional-args = 5
 
 [tool.ruff.lint.isort]
 known-first-party = ["ai_blogger"]
