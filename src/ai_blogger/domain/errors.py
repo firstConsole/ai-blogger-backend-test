@@ -10,3 +10,7 @@ class InvalidValueError(DomainError, ValueError):
 
 class IllegalTransitionError(DomainError):
     """Попытка перевести сущность в состояние, недостижимое из текущего"""
+
+
+class ChannelPausedError(DomainError):
+    """Действие требует активного канала, а канал остановлен"""
