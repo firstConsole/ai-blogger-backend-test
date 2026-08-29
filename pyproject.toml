@@ -7,7 +7,11 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.13,<4.0"
-dependencies = []
+
+[tool.poetry.dependencies]
+fastapi = "0.141.1"
+pydantic = "2.13.4"
+pydantic-settings = "2.14.2"
 
 [tool.poetry]
 packages = [{ include = "ai_blogger", from = "src" }]
@@ -90,6 +94,9 @@ docstring-code-format = true
 
 [tool.mypy]
 python_version = "3.13"
+# Плагин учит mypy читать модели pydantic: сигнатуры __init__, валидаторы,
+# обязательность полей. Без него половина конфига для него — просто Any.
+plugins = ["pydantic.mypy"]
 files = ["src", "tests"]
 strict = true
 warn_unreachable = true
