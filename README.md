@@ -1,5 +1,7 @@
 # AI-блогер
 
+[![CI](https://github.com/firstConsole/ai-blogger-backend-test/actions/workflows/ci.yml/badge.svg)](https://github.com/firstConsole/ai-blogger-backend-test/actions/workflows/ci.yml)
+
 Автономный контент-конвейер для Telegram-канала: собирает темы из RSS и поиска,
 пишет черновик, прогоняет его через критика, рисует картинку, отдаёт человеку на
 подтверждение и публикует по расписанию. Потом снимает статистику и подмешивает
