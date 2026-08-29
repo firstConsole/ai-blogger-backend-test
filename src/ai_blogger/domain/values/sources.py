@@ -23,8 +23,13 @@ DAYS_IN_BILLING_MONTH = 30
 
 
 @dataclass(frozen=True, slots=True)
-class FeedUrl:
-    """Адрес RSS-ленты"""
+class SourceUrl:
+    """Адрес, по которому сервер пойдёт сам: лента или статья
+
+    Проверки здесь дешёвые и не окончательные: имя может разрешиться в
+    петлевой адрес, а ответ DNS — поменяться между проверкой и запросом.
+    При загрузке адрес нужно проверить ещё раз, уже разрешённым.
+    """
 
     value: str
 
@@ -135,7 +140,7 @@ def _reject_numeric_lookalike(host: str) -> None:
 class TopicSources:
     """Источники тем канала: ленты и поисковые запросы"""
 
-    feeds: tuple[FeedUrl, ...] = ()
+    feeds: tuple[SourceUrl, ...] = ()
     queries: tuple[SearchQuery, ...] = ()
 
     def __post_init__(self) -> None:
@@ -155,7 +160,7 @@ class TopicSources:
             )
 
     @classmethod
-    def of(cls, feeds: Iterable[FeedUrl] = (), queries: Iterable[SearchQuery] = ()) -> Self:
+    def of(cls, feeds: Iterable[SourceUrl] = (), queries: Iterable[SearchQuery] = ()) -> Self:
         """Собрать набор, выбросив повторы и сохранив порядок владельца"""
         return cls(tuple(dict.fromkeys(feeds)), tuple(dict.fromkeys(queries)))
 

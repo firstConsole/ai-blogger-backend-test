@@ -13,7 +13,7 @@ from ai_blogger.domain.values.editorial import EditorialPolicy
 from ai_blogger.domain.values.identifiers import ChannelId
 from ai_blogger.domain.values.language import Language
 from ai_blogger.domain.values.schedule import PublicationSchedule
-from ai_blogger.domain.values.sources import FeedUrl, SearchQuery, TopicSources
+from ai_blogger.domain.values.sources import SearchQuery, SourceUrl, TopicSources
 from ai_blogger.domain.values.telegram import TelegramChatId
 
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -125,7 +125,7 @@ def test_sources_are_replaceable_without_touching_identity() -> None:
 
     channel.update_sources(
         TopicSources.of(
-            feeds=[FeedUrl.parse("https://news.example.com/rss")],
+            feeds=[SourceUrl.parse("https://news.example.com/rss")],
             queries=[SearchQuery.parse("нейросети в медицине")],
         )
     )
