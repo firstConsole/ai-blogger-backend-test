@@ -40,3 +40,19 @@ class TelegramMessageId:
 
     def __str__(self) -> str:
         return str(self.value)
+
+
+@dataclass(frozen=True, slots=True)
+class TelegramUserId:
+    """Кто именно нажал кнопку в админ-чате"""
+
+    value: int
+
+    def __post_init__(self) -> None:
+        if self.value <= 0:
+            raise InvalidValueError(
+                f"идентификатор пользователя должен быть положительным, получено {self.value}"
+            )
+
+    def __str__(self) -> str:
+        return str(self.value)
