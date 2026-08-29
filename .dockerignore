@@ -1,0 +1,52 @@
+# Секреты
+**/.env
+**/.env.*
+!.env.example
+**/*.pem
+**/*.key
+**/*.session
+**/*.session-journal
+
+# История и служебное
+.git
+.gitignore
+.github
+.pre-commit-config.yaml
+.editorconfig
+
+# Окружения и кэш
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache
+**/.coverage
+**/.coverage.*
+**/htmlcov
+**/coverage.xml
+
+# Локальные данные
+data
+media
+**/*.sqlite3
+**/*.db
+**/*.log
+
+# Тесты и документация
+tests
+docs
+**/*.md
+!README.md
+
+# Редакторы и ОС
+.idea
+.vscode
+**/.DS_Store
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore

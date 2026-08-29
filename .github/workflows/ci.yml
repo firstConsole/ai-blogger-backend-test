@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+  POETRY_VERSION: "2.3.2"
+
+jobs:
+  quality:
+    name: Линтер, типы и тесты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Установить Poetry
+        run: pipx install "poetry==${{ env.POETRY_VERSION }}"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: poetry
+
+      - name: Установить зависимости
+        run: poetry install
+
+      - name: make check
+        run: make check
+
+  hooks:
+    name: Гигиена файлов
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Установить pre-commit
+        run: pipx install pre-commit
+
+      - name: Прогнать хуки по всем файлам
+        env:
+          SKIP: gitleaks,no-commit-to-branch
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  secrets:
+    name: Поиск секретов в истории
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks
+        run: |
+          docker run --rm --volume "$PWD:/repo" --workdir /repo \
+            ghcr.io/gitleaks/gitleaks:v8.30.0 \
+            git --redact --verbose --no-banner
+
+  image:
+    name: Сборка образа
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Собрать
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: runtime
+          push: false
+          load: true
+          tags: ai-blogger:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Проверить образ
+        run: |
+          docker run --rm ai-blogger:ci python -c "import ai_blogger; print(ai_blogger.__version__)"
+          test "$(docker run --rm ai-blogger:ci id -u)" != "0" \
+            || { echo "образ работает от root"; exit 1; }
+          docker run --rm ai-blogger:ci python -c "
+          import importlib.util as u, sys
+          leaked = [m for m in ('pytest', 'ruff', 'mypy') if u.find_spec(m)]
+          sys.exit(f'в рабочем образе dev-зависимости: {leaked}' if leaked else 0)
+          "
